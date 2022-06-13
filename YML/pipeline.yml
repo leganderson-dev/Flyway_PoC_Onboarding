@@ -71,13 +71,13 @@ stages:
         TargetPath: $(buildDirectory)\
         Parallel: true
  
-- stage: Test
-  pool: ExamplePool
+- stage: Staging
+  pool: Anderson_LocalAgent #I'm using a self-hosted agent, make sure you know which agent/pool/runner your system uses
   condition: succeeded('Build') #This is optional, but can help ensure the pipeline runs as required
   variables:
     databaseName: $(databasePrefix)_$(System.StageDisplayName) #Database could be explicitly provided if required
     databaseHost: 'Localhost' # Host address for the Build Database
-    databaseInstance: 'SQLEXPRESS' # Optional - Check your JDBC connection to see if required
+    #databaseInstance: 'SQLEXPRESS' # Optional - Check your JDBC connection to see if required
     databasePort: '1433' #This is redundant if also providing an instance 
     databaseUsername: '' #Optional - If intergratedSecurity is not used, a Username can be provided. This is often better used in conjunction with ADO secret variables.
     databasePassword: '' #Optional - If intergratedSecurity is not used, a Password can be provided. This is often better used in conjunction with ADO secret variables.
