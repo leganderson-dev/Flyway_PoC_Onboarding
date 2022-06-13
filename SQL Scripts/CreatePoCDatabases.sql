@@ -1,6 +1,21 @@
 
 
 /*
+Create empty Widget_Build DB
+*/
+ 
+IF  EXISTS (SELECT name FROM sys.databases 
+		WHERE name = N'Widget_Build'
+)
+ 
+ 
+DROP DATABASE Widget_Build
+GO
+ 
+CREATE DATABASE Widget_Build
+
+
+/*
 Create empty Widget Shadow DB
 */
  
