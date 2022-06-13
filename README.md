@@ -44,7 +44,7 @@ Create a New Project
 Link Development database to the project
 > This is the database that we (as developers) will use to make and validate our changes, before those get committed to source control
 
-> If you have used our script to generate the PoC databases (Prep 3), we will link the Widget_Dev database
+> We will link the Widget_Dev database
 
 **Step 3.4**
 Create your 'Schema Model'
@@ -58,7 +58,7 @@ Create your 'Schema Model'
 Set up the shadow database
 > Click on 'Generate Migrations' and then in 'Set up Shadow Database'
 
-> If you have used our script to generate the PoC databases (Prep 3), we will link the Widget_Shadow database
+> We will link the Widget_Shadow database
 
 > [Learn more about Shadow Databases](https://documentation.red-gate.com/fd/shadow-database-or-shadow-schema-138347147.html)
 
