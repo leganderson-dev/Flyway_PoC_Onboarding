@@ -1,4 +1,10 @@
-
+/*
+Create empty Widget_Build DB
+Create empty Widget_Shadow DB
+Create and populate Widget_Dev
+Create and populate Widget_Staging
+Create and populate Widget_Prod
+*/
 
 /*
 Create empty Widget_Build DB
@@ -30,20 +36,20 @@ GO
 CREATE DATABASE Widget_Shadow
 
 /*
-Create Widget Dev
+Create Widget_Dev
 */
  
 IF  EXISTS (SELECT name FROM sys.databases 
-		WHERE name = N'WidgetDev'
+		WHERE name = N'Widget_Dev'
 )
  
  
-DROP DATABASE WidgetDev
+DROP DATABASE Widget_Dev
 GO
  
-CREATE DATABASE WidgetDev
+CREATE DATABASE Widget_Dev
 GO
-USE WidgetDev
+USE Widget_Dev
 GO
  
 CREATE TABLE [dbo].[WidgetPrices] (
@@ -168,9 +174,9 @@ DENY  EXECUTE  ON [dbo].[prcActivatePrices]  TO [public] CASCADE
 GO
  
 /*
-Populate WidgetDev with data
+Populate Widget_Dev with data
 */
-USE WidgetDev
+USE Widget_Dev
 GO
 SET NUMERIC_ROUNDABORT OFF
 GO
@@ -399,7 +405,7 @@ DENY  EXECUTE  ON [dbo].[prcActivatePrices]  TO [public] CASCADE
 GO
  
 /*
-Populate WidgetStaging with data
+Populate Widget_Staging with data
 */
 USE Widget_Staging
 GO
