@@ -305,7 +305,7 @@ stages:
       timeoutInMinutes: 30 # task times out in 30 minutes
       inputs:
         notifyUsers: |
-          anderson.rangel@red-gate.com 
+          chris.hawkins@red-gate.com 
         instructions: 'Review Copy of Dry Run Script and Comparison Report located in the following folder: F:\DevOps_Resources\Deployment Resources\Widget\Release\Build-$(Build.BuildNumber)\$(System.StageDisplayName)\Reports'
         onTimeout: 'resume'
   
