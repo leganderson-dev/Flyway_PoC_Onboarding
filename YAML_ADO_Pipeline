@@ -1,0 +1,329 @@
+variables:
+    databasePrefix: 'Widget'
+    buildDirectory: 'F:\DevOps_Resources\Deployment Resources\Widget\Build\Build-$(Build.BuildNumber)' #This is an example Build path, where the build files will be written to, change as required
+    releaseDirectory: 'F:\DevOps_Resources\Deployment Resources\Widget\Release\Build-$(Build.BuildNumber)'
+    releaseName: $(Build.BuildNumber) #This is used in the release process to ensure unique foldering
+    releaseEnvironment: $(System.StageDisplayName) #This captures the current stage name for use in the Release scripts
+    artifactName: '$(databasePrefix)_Database_Build-$(Build.BuildNumber)' #Change as required
+    directoryCompare: 'F:\Program Files (x86)\Red Gate\SQL Compare 14' #If this is added to PATH, it can be removed as an environment variable
+    directoryCodeGuard: 'F:\Code Analysis' #If this is added to PATH, it can be removed as an environment variable
+    #FLYWAY_LICENSE_KEY: '' #Enter your Flyway Teams license here. For added security, this could also be passed in as a secure environment variable if required.
+stages:
+- stage: Build
+  pool: Anderson_LocalAgent
+
+  variables:
+    databaseName: $(databasePrefix)_$(System.StageDisplayName) #Database could be explicitly provided if required
+    databaseHost: 'DaLab' # Host address for the Build Database
+    databaseInstance: '' # Optional - Check your JDBC connection to see if required
+    databasePort: '1433' #This is redundant if also providing an instance 
+    databaseUsername: 'redgate' #Optional - If intergratedSecurity is not used, a Username can be provided. This is often better used in conjunction with ADO secret variables.
+    databasePassword: 'Redg@te1' #Optional - If intergratedSecurity is not used, a Password can be provided. This is often better used in conjunction with ADO secret variables.
+    flywayJDBC: '-url=jdbc:sqlserver://$(databaseHost);databaseName=$(databaseName)' #If user/pass credentials are provided, ensure ;integratedSecurity is removed from the flyway script
+    flywayLocations: '-locations=filesystem:$(Build.SourcesDirectory)\*\migrations' #This may need to be updated to match your environment, depending on the structure of your GIT repo
+    flywayAdditionalParams: '-placeholders.environment=Build' #This is useful when providing advanced parameters to Flyway, for example which environment we're currently running against
+    flywaySecurityParams: 'trustservercertificate=true;integratedSecurity=true'
+    FLYWAY_CLEAN_DISABLED: false
+    compareSnapshotParams: '/server1:$(databaseHost)\$(databaseInstance) /database1:$(databaseName) /makeSnapshot:"$(buildDirectory)\$(artifactName)\Snapshots\$(artifactName)_Snapshot.snp"' #This will likely need updating to match your preferred connection details. Documentation Can be found  - https://documentation.red-gate.com/sc/using-the-command-line/switches-used-in-the-command-line
+    enableFlywayBuild: 'true'
+    enableSnapshot: 'true'
+
+  jobs:
+  - job: 'ContinuousIntegrationSteps'
+    displayName: 'Continuous Integration Steps'
+    steps:
+
+      - script: |
+          echo 'Cleaning $(databaseName)'     
+          flyway clean $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayAdditionalParams)
+        workingDirectory: #Add working directory location if required
+        failOnStderr: true
+        condition: eq(variables['enableFlywayBuild'], 'true')
+        displayName: 'Flyway Clean - Against $(databaseName)'
+      
+      - script: |
+          echo 'Building Latest Repo against $(databaseName)'
+          flyway migrate $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayAdditionalParams)
+        workingDirectory: #Add working directory location if required
+        failOnStderr: true
+        condition: eq(variables['enableFlywayBuild'], 'true')
+        displayName: 'Flyway Migrate - Against $(databaseName)'
+
+      - script: |
+          echo 'Check Status of Last migration against $(databaseName)'
+          flyway info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayAdditionalParams)
+        workingDirectory: #Add working directory location if required
+        failOnStderr: true
+        condition: eq(variables['enableFlywayBuild'], 'true')
+        displayName: 'Flyway Info - Against $(databaseName)'
+      
+      - script: |
+          echo 'Change to SQL Compare Directory'
+          cd\
+          cd "$(directoryCompare)"
+          sqlcompare $(compareSnapshotParams)
+        workingDirectory: #Add working directory location if required
+        failOnStderr: true
+        condition: eq(variables['enableSnapshot'], 'true')
+        displayName: 'Capture Current State - Against $(databaseName)'
+        env:
+          exampleVariable: 'Value' #If additional script level variables are required, add them here
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish Artifact: $(artifactName)'
+        inputs:
+          PathtoPublish: $(databasePrefix)
+          ArtifactName: $(artifactName)
+          ArtifactType: FilePath
+          TargetPath: $(buildDirectory)\
+          Parallel: true
+
+- stage: Staging
+  pool: Anderson_LocalAgent
+  condition: succeeded('Build') #This is optional, but can help ensure the pipeline runs as required
+  variables:
+    databaseName: $(databasePrefix)_$(System.StageDisplayName) #Database could be explicitly provided if required
+    databaseHost: 'DaLab' # Host address for the Build Database
+    databaseInstance: '' # Optional - Check your JDBC connection to see if required
+    databasePort: '1433' #This is redundant if also providing an instance 
+    databaseUsername: '' #Optional - If intergratedSecurity is not used, a Username can be provided. This is often better used in conjunction with ADO secret variables.
+    databasePassword: '' #Optional - If intergratedSecurity is not used, a Password can be provided. This is often better used in conjunction with ADO secret variables.
+    reportsFolder: '$(releaseDirectory)\$(System.StageDisplayName)\Reports'
+    flywayJDBC: '-url=jdbc:sqlserver://$(databaseHost);databaseName=$(databaseName)' #If user/pass credentials are provided, ensure ;integratedSecurity is removed from the flyway script
+    flywaySecurityParams: 'trustservercertificate=true;integratedSecurity=true'
+    flywayMigrationsFolder: '$(buildDirectory)\$(artifactName)\migrations'
+    flywayLocations: '-locations=filesystem:"$(flywayMigrationsFolder)"' #This may need to be updated to match your environment, depending on the structure of your GIT rep
+    flywayDryRunScriptName: '$(databaseName)_$(releaseName)_DryRun_Script.sql'
+    flywayDryRun: '-dryRunOutput="$(reportsFolder)\$(flywayDryRunScriptName)"'
+    flywayAdditionalParams: '-baselineOnMigrate=true -placeholders.environment=Staging' #This is useful when providing advanced parameters to Flyway, for example which environment we're currently running against
+    FLYWAY_CLEAN_DISABLED: true
+    compareSchemaParams: '/Server1:$(databaseHost)\$(databaseInstance) /Database1:$(databaseName) /Makescripts:"$(releaseDirectory)\$(System.StageDisplayName)\Schema Backup\"' #This will likely need updating to match your preferred connection details. Documentation Can be found  - https://documentation.red-gate.com/sc/using-the-command-line/switches-used-in-the-command-line
+    compareReportParams: '/Server2:$(databaseHost)\$(databaseInstance) /Database2:$(databaseName) /Snapshot1:"$(buildDirectory)\$(artifactName)\Snapshots\$(artifactName)_Snapshot.snp" /report:"$(reportsFolder)\$(databaseName)_Comparison_Report_$(releaseName).html" /force /exclude:table:flyway* /exclude:table:__SchemaSnapshot /include:Identical /Options:IgnoreWithNocheck /reportType:html'
+    sqlCodeGuardParams: '/source:"$(reportsFolder)\$(flywayDryRunScriptName)"  /out:"$(reportsFolder)\$(databaseName)_$(releaseName)_CodeAnalysis.html" /exclude:SC006 /warning:ALL'
+    enableSchemaBackup: 'true'
+    enableFlywayDryRun: 'true'
+    enableFlywayMigrate: 'true'
+    enableCodeAnalysis: 'true'
+    enableComparisonReport: 'true'
+  
+  jobs:
+  - job: Preparation_Activities
+    displayName: 'Preparation Activities'
+    dependsOn:
+    condition:
+  
+    steps:
+      # This script captures the current state of the $(databaseName) database. This can be useful for both audit purposes and reporting
+    - script: |
+          echo *** Create Schema Backup for $(databaseName): $(releaseDirectory)\$(System.StageDisplayName)\Schema Backup\'
+         
+          cd\
+          cd $(directoryCompare)
+          sqlcompare $(compareSchemaParams)
+
+      workingDirectory: #Add working directory location if required
+      displayName: 'Capture Current Schema for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableSchemaBackup'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+  
+        # This script uses Flyway to create a single change script for what Flyway would do if it was allowed, against the $(databaseName) database. This can be useful for both audit purposes and reporting
+    - script: |
+          echo *** Create Dryrun Script for the $(datbaseName) Database ***
+          echo *** Build directory in use "$(flywayMigrationsFolder)" ***
+          echo *** Flyway command: flyway migrate info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) ***
+          echo *** Dryrun Output: $(reportsFolder)\$(flywayDryRunScriptName) ***
+
+          flyway migrate info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayDryRun) $(flywayAdditionalParams)
+ 
+      workingDirectory: #Add working directory location if required
+      displayName: 'Create Deployment Report for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableFlywayDryRun'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+    
+      # This script uses SQL Code Guard to analyze the above dry run script for best practices
+    - script: |
+          echo *** Changing Directory to - $(directoryCodeGuard) ***
+          echo *** sqlCodeGuardParams: $(sqlCodeGuardParams) ***
+          cd\
+          cd $(directoryCodeGuard)
+          echo 'Running SQL Code Guard'
+          SqlCodeGuard.cmd.exe $(sqlCodeGuardParams)
+  
+      workingDirectory: #Add working directory location if required
+      displayName: 'Create Code Analysis Report for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableCodeAnalysis'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+      
+      # This script uses SQL Compare to create a Change Report
+    - script: |
+          
+          echo *** 'Run SQL Compare to Create Comparison Report' ***
+          echo *** 'Snapshot used - $(buildDirectory)\$(artifactName)\Snapshots\$(artifactName)_Snapshot.snp' ***
+          echo *** SQL Compare cmd: sqlcompare $(compareReportParams)
+
+          cd $(directoryCompare)  
+          sqlcompare $(compareReportParams)
+  
+      workingDirectory: #Add working directory location if required
+      displayName: 'Create Comparison Report for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableComparisonReport'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+  
+  - job: Release_Activities
+    displayName: 'Release Activities'
+    dependsOn: Preparation_Activities
+    condition: succeeded('Preparation_Activities') #This is optional, however will ensure the stages don't run at the same time.
+  
+    steps:
+    - script: |
+          echo *** Run latest migration scripts against $(databaseName) ***
+          echo *** Flyway command: flyway migrate info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayAdditionalParams)
+          flyway migrate info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayAdditionalParams)
+      workingDirectory: #Add working directory location if required
+      displayName: 'Flyway Migration Activity - Against $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableFlywayMigrate'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+
+- stage: Prod
+  pool: Anderson_LocalAgent
+  condition: succeeded('Staging') #This is optional, but can help ensure the pipeline runs as required
+  variables:
+    databaseName: $(databasePrefix)_$(System.StageDisplayName) #Database could be explicitly provided if required
+    databaseHost: 'DaLab' # Host address for the Build Database
+    databaseInstance: '' # Optional - Check your JDBC connection to see if required
+    databasePort: '1433' #This is redundant if also providing an instance 
+    databaseUsername: '' #Optional - If intergratedSecurity is not used, a Username can be provided. This is often better used in conjunction with ADO secret variables.
+    databasePassword: '' #Optional - If intergratedSecurity is not used, a Password can be provided. This is often better used in conjunction with ADO secret variables.
+    reportsFolder: '$(releaseDirectory)\$(System.StageDisplayName)\Reports'
+    flywayJDBC: '-url=jdbc:sqlserver://$(databaseHost);databaseName=$(databaseName)' #If user/pass credentials are provided, ensure ;integratedSecurity is removed from the flyway script
+    flywaySecurityParams: 'trustservercertificate=true;integratedSecurity=true'
+    flywayMigrationsFolder: '$(buildDirectory)\$(artifactName)\migrations'
+    flywayLocations: '-locations=filesystem:"$(buildDirectory)\$(artifactName)\migrations"' #This may need to be updated to match your environment, depending on the structure of your GIT rep
+    flywayDryRunScriptName: '$(databaseName)_$(releaseName)_DryRun_Script.sql'
+    flywayDryRun: '-dryRunOutput="$(reportsFolder)\$(flywayDryRunScriptName)"'
+    flywayAdditionalParams: '-baselineOnMigrate=true -placeholders.environment=Prod' #This is useful when providing advanced parameters to Flyway, for example which environment we're currently running against
+    FLYWAY_CLEAN_DISABLED: true
+    compareSchemaParams: '/Server1:$(databaseHost)\$(databaseInstance) /Database1:$(databaseName) /Makescripts:"$(releaseDirectory)\$(System.StageDisplayName)\Schema Backup\"' #This will likely need updating to match your preferred connection details. Documentation Can be found  - https://documentation.red-gate.com/sc/using-the-command-line/switches-used-in-the-command-line
+    compareReportParams: '/Server2:$(databaseHost)\$(databaseInstance) /Database2:$(databaseName) /Snapshot1:"$(buildDirectory)\$(artifactName)\Snapshots\$(artifactName)_Snapshot.snp" /report:"$(reportsFolder)\$(databaseName)_Comparison_Report_$(releaseName).html" /force /exclude:table:flyway* /exclude:table:__SchemaSnapshot /include:Identical /Options:IgnoreWithNocheck /reportType:html'
+    sqlCodeGuardParams: '/source:"$(reportsFolder)\$(flywayDryRunScriptName)"  /out:"$(reportsFolder)\$(databaseName)_$(releaseName)_CodeAnalysis.html" /exclude:SC006 /warning:ALL'
+    enableSchemaBackup: 'true'
+    enableFlywayDryRun: 'true'
+    enableFlywayMigrate: 'true'
+    enableCodeAnalysis: 'true'
+    enableComparisonReport: 'true'
+ 
+  jobs:
+  - job: Preparation_Activities
+    displayName: 'Preparation Activities'
+    dependsOn:
+    condition:
+ 
+    steps:
+    # This script captures the current state of the $(databaseName) database. This can be useful for both audit purposes and reporting
+    - script: |
+          echo *** Backup Current Database Schema for $(databaseName) ***
+          echo *** SQL Compare Command: sqlcompare $(compareSchemaParams) ***
+
+          cd\
+          cd $(directoryCompare)                
+          sqlcompare $(compareSchemaParams)
+
+      workingDirectory: #Add working directory location if required
+      displayName: 'Capture Current Schema for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableSchemaBackup'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+ 
+    # This script uses Flyway to create a single change script for what Flyway would do if it was allowed, against the $(databaseName) database. This can be useful for both audit purposes and reporting
+    - script: |
+          echo *** Create Dryrun Script for the $(datbaseName) Database ***
+          echo *** Build directory in use $(flywayMigrationsFolder) ***
+ 
+          flyway migrate info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayDryRun) $(flywayAdditionalParams)
+ 
+      workingDirectory: #Add working directory location if required
+      displayName: 'Create Deployment Report for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableFlywayDryRun'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+  
+    # This script uses SQL Code Guard to analyze the above dry run script for best practices
+    - script: |
+          echo Changing Directory to - $(directoryCodeGuard) 
+          cd\
+          cd $(directoryCodeGuard)
+ 
+          echo 'Running SQL Code Guard'
+ 
+          SqlCodeGuard.cmd.exe $(sqlCodeGuardParams)
+ 
+      workingDirectory: #Add working directory location if required
+      displayName: 'Create Code Analysis Report for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableCodeAnalysis'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+    
+    # This script uses SQL Compare to create a Change Report
+    - script: |
+          echo *** Run SQL Compare to Create Comparison Report ***
+          echo *** SQL Compare Command: sqlcompare $(compareReportParams) ***
+          echo *** Snapshot used - $(buildDirectory)\$(artifactName)\Snapshots\$(artifactName)_Snapshot.snp ***
+          
+          cd $(directoryCompare)
+          sqlcompare $(compareReportParams)
+ 
+      workingDirectory: #Add working directory location if required
+      displayName: 'Create Comparison Report for Database: $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableComparisonReport'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+ 
+# This is an optional Validation Steps that requires one or multiple users to approve, before Flyway is run against the Production database.
+  - job: waitForValidation
+    displayName: Waiting for Manual Approval
+    dependsOn: Preparation_Activities
+    condition: succeeded('Preparation_Activities')
+    pool: server  
+    timeoutInMinutes: 30 # job times out in 30 minutes
+    steps:   
+    - task: ManualValidation@0
+      displayName: Manual Validation Step
+      timeoutInMinutes: 30 # task times out in 30 minutes
+      inputs:
+        notifyUsers: |
+          anderson.rangel@red-gate.com 
+        instructions: 'Review Copy of Dry Run Script and Comparison Report located in the following folder: F:\DevOps_Resources\Deployment Resources\Widget\Release\Build-$(Build.BuildNumber)\$(System.StageDisplayName)\Reports'
+        onTimeout: 'resume'
+  
+  - job: Release_Activities
+    displayName: 'Release Activities'
+    dependsOn: waitForValidation
+    condition: succeeded('waitForValidation')
+ 
+    steps:
+    - script: |
+          echo 'Run latest migration scripts against $(databaseName)'
+          
+          flyway migrate info $(flywayJDBC);$(flywaySecurityParams) -user="$(databaseUsername)" -password="$(databasePassword)" $(flywayLocations) $(flywayAdditionalParams)
+      workingDirectory: #Add working directory location if required
+      displayName: 'Flyway Migration Activity - Against $(databaseName)'
+      failOnStderr: true
+      condition: eq(variables['enableFlywayMigrate'], 'true')
+      env:
+        exampleVariable: 'Value' #If additional script level variables are required, add them here
+            
+      
